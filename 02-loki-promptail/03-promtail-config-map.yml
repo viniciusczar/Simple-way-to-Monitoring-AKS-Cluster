@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: monitoring
+data:
+  config.yml: |
+    server:
+      http_listen_port: 3101
+      grpc_listen_port: 0
+    
+    positions:
+      filename: /tmp/positions.yaml
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    
+    scrape_configs:
+      - job_name: apps
+        kubernetes_sd_configs:
+          - role: pod
+        pipeline_stages:
+          # JSON parsing for applications that log in JSON
+          - json:
+              expressions:
+                level: level
+                timestamp: timestamp
+                message: message
+                service: service
+                context: context
+                trace_id: trace_id
+                url: url
+                user_id: user_id
+                session_id: session_id
+                method: method
+                status_code: status_code
+                response_time: response_time
+          
+          # Timestamp parsing (if available)
+          - timestamp:
+              source: timestamp
+              format: RFC3339
+              action_on_failure: skip
+          
+          # Basic labels extracted from JSON
+          - labels:
+              level:
+              service:
+              context:
+          
+          # Conditional pipeline to backend (detected by name)
+          - match:
+              selector: '{app="my-application-backend"}'
+              stages:
+                - json:
+                    expressions:
+                      method: method
+                      status_code: status_code
+                      response_time: response_time
+                - labels:
+                    method:
+                    status_code:
+          
+          # Conditional pipeline for frontends (detected by name with "front")
+          - match:
+              selector: '{app=~".*front.*"}'
+              stages:
+                - json:
+                    expressions:
+                      url: url
+                      user_id: user_id
+                      session_id: session_id
+                - labels:
+                    user_id:
+                    session_id:
+        
+        relabel_configs:
+          # KEEP ONLY my-application apps (based on app name)
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: my-application.*
+            action: keep
+          
+          # KEEP ONLY dev and prod namespaces
+          - source_labels: [__meta_kubernetes_namespace]
+            regex: (dev|prod)
+            action: keep
+          
+          # Add namespace as label
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          
+          # Add pod name
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          
+          # Add application name (main label)
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          
+          # DETECT TECHNOLOGY automatically based on name
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: my-application-backend
+            target_label: technology
+            replacement: nestjs
+          
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: my-application.*front.*
+            target_label: technology
+            replacement: nextjs
+          
+          # DETECT COMPONENT automatically based on name
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: my-application-backend
+            target_label: component
+            replacement: backend
+          
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: my-application.*front.*
+            target_label: component
+            replacement: frontend
+          
+          # DETECT ENVIRONMENT based on namespace
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: environment
+          
+          # Path to container logs
+          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+            target_label: __path__
+            separator: /
+            replacement: /var/log/pods/*$1/*.log
+          
+          # Container name
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container

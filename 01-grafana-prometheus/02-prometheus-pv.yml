@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: prometheus-azurefile-pv
+spec:
+  capacity:
+    storage: 30Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: azurefile-csi
+  csi:
+    driver: file.csi.azure.com
+    volumeHandle: "ResourceGroupHere#AccountFileNameHere#ShareFileNameHere"  # make sure this volumeid is unique for every identical share in the cluster
+    volumeAttributes:
+      shareName: ShareFileNameHere
+    nodeStageSecretRef:
+      name: azure-files-secret
+      namespace: monitoring
+  mountOptions:
+    - dir_mode=0777
+    - file_mode=0777
+    - uid=0
+    - gid=0
+    - mfsymlinks
+    - cache=strict
+    - nosharesock
